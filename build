@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+
+dev=/dev/ttyACM0
+
+set -e
+
+rm -rf out
+rm -rf build-*
+
+step="$1"
+case "$step" in
+    compile)
+        ;;
+    test)
+        ;;
+    *)
+        echo "Invalid step: $step"
+        exit 1
+        ;;
+esac
+
+platform="$2"
+case "$platform" in
+    avr)
+        gcc_cmd="avr-gcc -g -Os -mmcu=atmega328p -DF_CPU=16000000UL"
+        ;;
+    pc)
+        gcc_cmd="gcc -g -O0"
+        ;;
+    *)
+        echo "Invalid platform: $platform"
+        exit 1
+        ;;
+esac
+build_dir=build-"$platform"
+mkdir -p "$build_dir"
+
+$gcc_cmd -c -o "$build_dir"/"$platform"_main.o "$platform"_main.c
+$gcc_cmd -c -o "$build_dir"/test.o test.c
+$gcc_cmd -o "$build_dir"/"$platform"_app \
+    "$build_dir"/"$platform"_main.o \
+    "$build_dir"/test.o
+
+mkdir -p out
+case "$platform" in
+    avr)
+        avr-objcopy -j .text -j .data -O ihex \
+            "$build_dir"/avr_app out/avr_app.hex
+        ;;
+    pc)
+        cp "$build_dir"/pc_app out/pc_app
+        ;;
+esac
+
+if [[ "$step" == compile ]]; then
+    exit 0
+fi
+
+case "$platform" in
+    avr)
+        avrdude -v -p m328p -c arduino -P "$dev" -U flash:w:out/avr_app.hex:i
+        stty -F "$dev" 38400
+        timeout 60 sed /bye/q "$dev" | tee out/tap.txt
+        ;;
+    pc)
+        out/pc_app | tee out/tap.txt
+        ;;
+esac
